@@ -27,6 +27,19 @@
   --warning:#ff8a00;
   --radius:10px;
 }
+[data-theme="light"]{
+  --bg:#f0f2f5;
+  --surface:#ffffff;
+  --surface2:#e8eaed;
+  --border:#d1d5db;
+  --text:#111827;
+  --text2:#4b5563;
+  --text3:#9ca3af;
+  --accent:#5c6bc0;
+  --accent2:#0d9488;
+  --danger:#dc2626;
+  --warning:#d97706;
+}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;max-width:640px;margin:0 auto;padding-bottom:80px}
 
 /* NAV */
@@ -74,9 +87,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .sub-name.done{text-decoration:line-through;color:var(--text3)}
 
 /* DYNAMIC */
-.dyn-add{display:flex;gap:6px;margin-top:8px}
-.dyn-add input{flex:1;background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:7px 10px;color:#fff;font-size:12px}
-.dyn-add input::placeholder{color:var(--text3)}
+.dyn-add{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.dyn-add .dyn-text{flex:1;min-width:120px;background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:7px 10px;color:#fff;font-size:12px}
+.dyn-add .dyn-text::placeholder{color:var(--text3)}
+.dyn-add .dyn-date{width:120px;background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:7px 8px;color:var(--text2);font-size:11px}
 .dyn-del{opacity:0;background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:2px;flex-shrink:0}
 .sub-row:hover .dyn-del{opacity:1}
 
@@ -263,7 +277,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div id="app">
   <div class="header">
     <div class="header-title">Трекер</div>
-    <div id="headerRight"></div>
+    <div id="headerRight" style="display:flex;gap:6px"><div class="theme-btn" id="notifBtn" aria-label="Уведомления"><i class="ti ti-bell" aria-hidden="true"></i></div><div class="theme-btn" id="themeToggle" aria-label="Переключить тему"><i class="ti ti-sun" aria-hidden="true"></i></div></div>
   </div>
 
   <div class="date-nav" id="dateNav" style="display:none">
@@ -281,6 +295,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 
   <div class="screen" id="screenDynamic">
+    <div class="month-nav"><button class="month-nav-btn" id="dynPrevMonth"><i class="ti ti-chevron-left" aria-hidden="true"></i></button><div class="month-nav-label" id="dynMonthLabel"></div><button class="month-nav-btn" id="dynNextMonth"><i class="ti ti-chevron-right" aria-hidden="true"></i></button></div>
     <div class="metrics" id="dynMetrics"></div>
     <div class="section-title">Выполнение по дням</div>
     <div class="chart-card"><div style="position:relative;width:100%;height:180px"><canvas id="dailyChart" role="img" aria-label="Выполнение по дням"></canvas></div></div>
@@ -293,11 +308,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 
   <div class="screen" id="screenProgress">
+    <div id="dayNoteBlock"></div>
     <div id="moodBlock"></div>
     <div class="section-title">Стрики</div>
     <div class="streak-grid" id="streakGrid"></div>
-    <div class="section-title">Цели на месяц</div>
-    <div id="goalsBlock"></div>
     <div class="section-title">Отчёт за неделю</div>
     <div class="week-card" id="weekBlock"></div>
     <div class="section-title">График настроения</div>
@@ -405,6 +419,14 @@ async function loadAll(){
   STATE.projectTasks = {};
   (ptRes.data||[]).forEach(t=>{ if(!STATE.projectTasks[t.project_id])STATE.projectTasks[t.project_id]=[]; STATE.projectTasks[t.project_id].push(t); });
   STATE.projectHabits = {};
+  STATE.notes = {};
+  STATE.counterLogs = {};
+  let clRes = await sb.from('counter_logs').select('*').gte('log_date', ms+'-01').lte('log_date', ms+'-'+pad(daysInMonth(ms)));
+  (clRes.data||[]).forEach(l=>{ if(!STATE.counterLogs[l.habit_id])STATE.counterLogs[l.habit_id]={}; STATE.counterLogs[l.habit_id][l.log_date]=l; });
+  // Load day notes for current month
+  let ms2 = monthStr(new Date());
+  let noteRes = await sb.from('day_notes').select('*').gte('note_date', ms2+'-01').lte('note_date', ms2+'-'+pad(daysInMonth(ms2)));
+  (noteRes.data||[]).forEach(n=>{ STATE.notes[n.note_date]=n; });
   (phRes.data||[]).forEach(ph=>{ if(!STATE.projectHabits[ph.project_id])STATE.projectHabits[ph.project_id]=[]; STATE.projectHabits[ph.project_id].push(ph.habit_id); });
 }
 
@@ -509,6 +531,7 @@ function renderToday(){
 }
 
 function buildCard(habit,hi,skipped){
+  if(habit.type==='counter') return buildCounterCard(habit,hi,skipped);
   let color=COLORS[hi%COLORS.length];
   let progress=skipped?0:getHabitProgress(habit,ACTIVE_DATE);
   let pct=Math.round(progress*100);
@@ -562,7 +585,7 @@ function buildCardBody(habit,subs,isDynamic,isWorkout,color){
         <span class="sub-name${t.done?' done':''}">${t.task_text}</span>
         <button class="dyn-del" data-del-dyn="${t.id}" aria-label="Удалить задачу"><i class="ti ti-x" aria-hidden="true"></i></button>
       </div>`).join(''):'<div class="empty" style="padding:8px 0;text-align:left;font-size:11px">Добавь задачи на сегодня</div>';
-    return `<div class="subtasks">${tasksHtml}<div class="dyn-add"><input placeholder="Новая задача..." data-dyn-input="${habit.id}"/><div class="icon-btn" data-dyn-add="${habit.id}" aria-label="Добавить"><i class="ti ti-plus" aria-hidden="true"></i></div></div></div>`;
+    return `<div class="subtasks">${tasksHtml}<div class="dyn-add"><input class="dyn-text" placeholder="Новая задача..." data-dyn-input="${habit.id}"/><input class="dyn-date" type="date" data-dyn-date="${habit.id}" value="${ACTIVE_DATE}"/><div class="icon-btn" data-dyn-add="${habit.id}" aria-label="Добавить"><i class="ti ti-plus" aria-hidden="true"></i></div></div></div>`;
   }
   if(isWorkout){
     let prog=getWorkoutProg(habit,ACTIVE_DATE);
@@ -638,13 +661,23 @@ function setupCardEvents(container){
     btn.addEventListener('click',async()=>{
       let hid=btn.getAttribute('data-dyn-add');
       let input=container.querySelector(`[data-dyn-input="${hid}"]`);
+      let dateInput=container.querySelector(`[data-dyn-date="${hid}"]`);
       let text=input.value.trim();
+      let taskDate=dateInput?dateInput.value:ACTIVE_DATE;
+      if(!taskDate)taskDate=ACTIVE_DATE;
       if(!text)return;
-      let {data}=await sb.from('habit_logs').insert({habit_id:hid,subtask_id:null,log_date:ACTIVE_DATE,done:false,task_text:text}).select().single();
+      let {data}=await sb.from('habit_logs').insert({habit_id:hid,subtask_id:null,log_date:taskDate,done:false,task_text:text}).select().single();
       if(!STATE.dynTasks[hid])STATE.dynTasks[hid]={};
-      if(!STATE.dynTasks[hid][ACTIVE_DATE])STATE.dynTasks[hid][ACTIVE_DATE]=[];
-      STATE.dynTasks[hid][ACTIVE_DATE].push(data);
+      if(!STATE.dynTasks[hid][taskDate])STATE.dynTasks[hid][taskDate]=[];
+      STATE.dynTasks[hid][taskDate].push(data);
       input.value='';
+      // If task was added for a different date, show note
+      if(taskDate!==ACTIVE_DATE){
+        let note=container.querySelector(`[data-dyn-added-note="${hid}"]`);
+        if(!note){ note=document.createElement('div'); note.setAttribute('data-dyn-added-note',hid); note.style.cssText='font-size:10px;color:var(--accent2);margin-top:4px;'; container.querySelector(`[data-dyn-input="${hid}"]`).closest('.dyn-add').after(note); }
+        note.textContent='✓ Добавлено на '+taskDate;
+        setTimeout(()=>note.textContent='',3000);
+      }
       renderToday();
     });
   });
@@ -652,6 +685,7 @@ function setupCardEvents(container){
     inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ let btn=container.querySelector(`[data-dyn-add="${inp.getAttribute('data-dyn-input')}"]`); if(btn)btn.click(); }});
     inp.addEventListener('click',e=>e.stopPropagation());
   });
+  container.querySelectorAll('[data-dyn-date]').forEach(inp=>inp.addEventListener('click',e=>e.stopPropagation()));
   // Dynamic task toggle
   container.querySelectorAll('[data-toggle-dyn]').forEach(el=>{
     el.addEventListener('click',async(e)=>{
@@ -721,6 +755,37 @@ function setupCardEvents(container){
     });
     input.addEventListener('click',e=>e.stopPropagation());
   });
+  // Counter events
+  container.querySelectorAll('[data-counter-inc]').forEach(btn=>{
+    btn.addEventListener('click',async(e)=>{ e.stopPropagation();
+      let hid=btn.getAttribute('data-counter-inc');
+      let inp=container.querySelector(`[data-counter-input="${hid}"]`);
+      let habit=STATE.habits.find(h=>h.id===hid);
+      let step=parseFloat(habit?.counter_step||1);
+      let val=parseFloat(inp.value||0)+step;
+      inp.value=val;
+      await saveCounter(hid,val); renderToday();
+    });
+  });
+  container.querySelectorAll('[data-counter-dec]').forEach(btn=>{
+    btn.addEventListener('click',async(e)=>{ e.stopPropagation();
+      let hid=btn.getAttribute('data-counter-dec');
+      let inp=container.querySelector(`[data-counter-input="${hid}"]`);
+      let habit=STATE.habits.find(h=>h.id===hid);
+      let step=parseFloat(habit?.counter_step||1);
+      let val=Math.max(0,parseFloat(inp.value||0)-step);
+      inp.value=val;
+      await saveCounter(hid,val); renderToday();
+    });
+  });
+  container.querySelectorAll('[data-counter-input]').forEach(inp=>{
+    inp.addEventListener('change',async(e)=>{ e.stopPropagation();
+      let hid=inp.getAttribute('data-counter-input');
+      let val=parseFloat(inp.value)||0;
+      await saveCounter(hid,val); renderToday();
+    });
+    inp.addEventListener('click',e=>e.stopPropagation());
+  });
   // Edit/Delete/Schedule buttons
   container.querySelectorAll('[data-edit]').forEach(btn=>{ btn.addEventListener('click',e=>{ e.stopPropagation(); openEditHabit(btn.getAttribute('data-edit')); }); });
   container.querySelectorAll('[data-woedit]').forEach(btn=>{ btn.addEventListener('click',e=>{ e.stopPropagation(); openWorkoutEditor(btn.getAttribute('data-woedit')); }); });
@@ -757,7 +822,7 @@ function setupCardEvents(container){
 
 // DYNAMIC SCREEN
 function renderDynamic(){
-  let ms=monthStr(new Date());
+  let ms=VIEW_MONTH||monthStr(new Date());
   let days=[];
   for(let d=1;d<=daysInMonth(ms);d++) days.push(ms+'-'+pad(d));
 
@@ -774,7 +839,7 @@ function renderDynamic(){
     `<div class="metric"><div class="metric-val">${totalDone}</div><div class="metric-lbl">Выполнено</div></div>
      <div class="metric" style="border-left-color:var(--accent2)"><div class="metric-val">${totalPossible?Math.round(totalDone/totalPossible*100):0}%</div><div class="metric-lbl">Успех</div></div>
      <div class="metric" style="border-left-color:var(--warning)"><div class="metric-val">${bestI>=0?habitDone[bestI]+' дн':'—'}</div><div class="metric-lbl">Лидер · ${bestI>=0?STATE.habits[bestI].name.split(' ')[0]:''}</div></div>
-     <div class="metric" style="border-left-color:var(--danger)"><div class="metric-val">${worstI>=0?habitDone[worstI]+' дн':'—'}</div><div class="metric-lbl">Отстаёт · ${worstI>=0?STATE.habits[worstI].name.split(' ')[0]:''}</div></div>`;
+     <div class="metric" style="border-left-color:var(--danger)"><div class="metric-val">${worstI>=0?Math.round(habitDone[worstI]/(habitPossible[worstI]||1)*100)+'%':'—'}</div><div class="metric-lbl">Отстаёт · ${worstI>=0?STATE.habits[worstI].name.split(' ')[0]:''}</div></div>`;
 
   if(window._dc)window._dc.destroy();
   window._dc=new Chart(document.getElementById('dailyChart'),{type:'bar',data:{labels:days.map(d=>d.split('-')[2]),datasets:[{data:done,backgroundColor:done.map((v,i)=>{ let p=possible[i]||1; let r=v/p; return r>=0.75?'#d4ff00':r>=0.5?'#00e0c0':r>=0.25?'#ff8a00':'#1e2d47'; }),borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'#1e2d47'},ticks:{color:'#8a9ab5',font:{size:9},maxRotation:0,autoSkip:true}},y:{grid:{color:'#1e2d47'},ticks:{color:'#8a9ab5',stepSize:1},min:0,max:Math.max(1,...possible)}}}});
@@ -854,6 +919,7 @@ function renderProgress(){
   for(let d=1;d<=daysInMonth(ms);d++) days.push(ms+'-'+pad(d));
 
   // Mood
+  renderDayNote();
   let moodEl=document.getElementById('moodBlock');
   let mood=STATE.mood[ACTIVE_DATE]||{score:0,note:''};
   let scores='';
@@ -1070,14 +1136,25 @@ document.getElementById('addHabitBtn').addEventListener('click',()=>{
       <div class="type-opt active" data-type="fixed">Обычная</div>
       <div class="type-opt" data-type="dynamic">Задачи на день</div>
       <div class="type-opt" data-type="workout">Тренировка A/B/C</div>
+      <div class="type-opt" data-type="counter">Счётчик</div>
     </div>
     <div class="type-hint" id="typeHint">Фиксированные подзадачи, повторяются каждый день</div>
+    <div class="panel-label">Иконка</div>
+    ${buildIconPicker('ti-check')}
     <div class="panel-label">Название</div>
     <input class="panel-input" id="newName" placeholder="Напр. Утренняя тренировка"/>
     <div id="fixedSubsBlock">
       <div class="panel-label">Подзадачи (необязательно)</div>
       <div id="subInputs"></div>
       <button class="add-btn" id="addSubBtn" style="padding:7px;margin-bottom:8px"><i class="ti ti-plus" aria-hidden="true"></i> Подзадача</button>
+    </div>
+    <div id="counterBlock" style="display:none">
+      <div class="panel-label">Цель (напр. 2 для 2л воды)</div>
+      <input class="panel-input" id="counterTarget" type="number" placeholder="0 = без цели" value="0"/>
+      <div class="panel-label">Единица (напр. л, шагов, стр)</div>
+      <input class="panel-input" id="counterUnit" placeholder="напр. л"/>
+      <div class="panel-label">Шаг (напр. 0.25 для 250мл)</div>
+      <input class="panel-input" id="counterStep" type="number" placeholder="1" value="1"/>
     </div>
     <div class="panel-label">Дни недели</div>
     <div class="day-pills" id="newDays">${DAY_NAMES.map((n,i)=>`<div class="day-pill active" data-day="${i}">${n}</div>`).join('')}</div>
@@ -1087,12 +1164,15 @@ document.getElementById('addHabitBtn').addEventListener('click',()=>{
     </div>
   `);
   let selType='fixed';
+  setupIconPicker(null);
   document.getElementById('typeToggle').querySelectorAll('.type-opt').forEach(opt=>{
     opt.addEventListener('click',()=>{
       document.querySelectorAll('.type-opt').forEach(o=>o.classList.remove('active')); opt.classList.add('active');
       selType=opt.dataset.type;
       document.getElementById('fixedSubsBlock').style.display=selType==='fixed'?'block':'none';
-      document.getElementById('typeHint').textContent=selType==='dynamic'?'Каждый день вписываешь свои задачи':selType==='workout'?'Программы A/B/C — упражнения добавляются после создания':'Фиксированные подзадачи, повторяются каждый день';
+      let counterBlock=document.getElementById('counterBlock');
+      if(counterBlock)counterBlock.style.display=selType==='counter'?'block':'none';
+      document.getElementById('typeHint').textContent=selType==='dynamic'?'Каждый день вписываешь свои задачи':selType==='workout'?'Программы A/B/C — упражнения добавляются после создания':selType==='counter'?'Отслеживай числовые показатели: стаканы воды, шаги, страницы...':'Фиксированные подзадачи, повторяются каждый день';
     });
   });
   document.getElementById('addSubBtn').addEventListener('click',()=>{
@@ -1108,7 +1188,16 @@ document.getElementById('addHabitBtn').addEventListener('click',()=>{
     let name=document.getElementById('newName').value.trim(); if(!name){alert('Введи название');return;}
     let days=Array.from(document.querySelectorAll('#newDays .day-pill.active')).map(p=>parseInt(p.dataset.day));
     if(!days.length) days=[0,1,2,3,4,5,6];
-    let {data:habit}=await sb.from('habits').insert({name,type:selType,schedule_days:days,sort_order:STATE.habits.length}).select().single();
+    let selIcon=document.querySelector('#iconPicker .icon-opt.active')?.dataset.icon||'ti-check';
+    setupIconPicker(null);
+    let extraFields={};
+    if(selType==='counter'){
+      extraFields.counter_target=parseFloat(document.getElementById('counterTarget')?.value)||0;
+      extraFields.counter_unit=document.getElementById('counterUnit')?.value.trim()||'';
+      extraFields.counter_step=parseFloat(document.getElementById('counterStep')?.value)||1;
+      if(!selIcon||selIcon==='ti-check') selIcon='ti-chart-line';
+    }
+    let {data:habit}=await sb.from('habits').insert({name,type:selType,schedule_days:days,sort_order:STATE.habits.length,icon:selIcon,...extraFields}).select().single();
     STATE.habits.push(habit);
     if(selType==='fixed'){
       let subNames=Array.from(document.querySelectorAll('#subInputs input')).map(i=>i.value.trim()).filter(Boolean);
@@ -1272,6 +1361,231 @@ function openPanel(html){
   document.getElementById('backdrop').addEventListener('click',e=>{ if(e.target.id==='backdrop')closePanel(); });
 }
 function closePanel(){ document.getElementById('panelRoot').innerHTML=''; }
+
+
+// ===== THEME =====
+const ICONS_LIST = ["ti-sun", "ti-moon", "ti-star", "ti-heart", "ti-flame", "ti-bolt", "ti-brain", "ti-run", "ti-barbell", "ti-bike", "ti-walk", "ti-swimming", "ti-yoga", "ti-apple", "ti-salad", "ti-coffee", "ti-book", "ti-pencil", "ti-code", "ti-briefcase", "ti-chart-line", "ti-target", "ti-trophy", "ti-medal", "ti-music", "ti-headphones", "ti-camera", "ti-palette", "ti-plant", "ti-drop", "ti-bed", "ti-alarm", "ti-pill", "ti-stethoscope", "ti-tooth", "ti-eye", "ti-ban", "ti-currency-dollar", "ti-home", "ti-phone"];
+function initTheme(){
+  let t=localStorage.getItem('theme')||'dark';
+  document.documentElement.setAttribute('data-theme',t);
+  let btn=document.getElementById('themeToggle');
+  if(btn) btn.querySelector('i').className='ti '+(t==='dark'?'ti-sun':'ti-moon');
+}
+document.getElementById('themeToggle').addEventListener('click',()=>{
+  let cur=document.documentElement.getAttribute('data-theme')||'dark';
+  let next=cur==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',next);
+  localStorage.setItem('theme',next);
+  document.getElementById('themeToggle').querySelector('i').className='ti '+(next==='dark'?'ti-sun':'ti-moon');
+});
+
+// ===== ARCHIVE / MONTH NAV =====
+let VIEW_MONTH = '';
+function initViewMonth(){
+  VIEW_MONTH = monthStr(new Date());
+  updateDynMonthLabel();
+}
+function updateDynMonthLabel(){
+  let el=document.getElementById('dynMonthLabel');
+  if(!el)return;
+  let p=VIEW_MONTH.split('-').map(Number);
+  let names=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  el.textContent=names[p[1]-1]+' '+p[0];
+  let nextBtn=document.getElementById('dynNextMonth');
+  if(nextBtn) nextBtn.disabled=VIEW_MONTH>=monthStr(new Date());
+}
+document.getElementById('dynPrevMonth').addEventListener('click',async()=>{
+  let p=VIEW_MONTH.split('-').map(Number);
+  let d=new Date(p[0],p[1]-2,1);
+  VIEW_MONTH=monthStr(d);
+  updateDynMonthLabel();
+  await loadMonthData(VIEW_MONTH);
+  renderDynamic();
+});
+document.getElementById('dynNextMonth').addEventListener('click',async()=>{
+  if(VIEW_MONTH>=monthStr(new Date()))return;
+  let p=VIEW_MONTH.split('-').map(Number);
+  let d=new Date(p[0],p[1],1);
+  VIEW_MONTH=monthStr(d);
+  updateDynMonthLabel();
+  await loadMonthData(VIEW_MONTH);
+  renderDynamic();
+});
+
+async function loadMonthData(ms){
+  let monthStart=ms+'-01';
+  let monthEnd=ms+'-'+pad(daysInMonth(ms));
+  let [logRes,wlRes,mRes]=await Promise.all([
+    sb.from('habit_logs').select('*').gte('log_date',monthStart).lte('log_date',monthEnd),
+    sb.from('workout_logs').select('*').gte('log_date',monthStart).lte('log_date',monthEnd),
+    sb.from('mood_logs').select('*').gte('log_date',monthStart).lte('log_date',monthEnd),
+  ]);
+  (logRes.data||[]).forEach(l=>{
+    let key=l.habit_id+(l.subtask_id||'');
+    if(!STATE.logs[key])STATE.logs[key]={};
+    if(!STATE.logs[key][l.log_date])STATE.logs[key][l.log_date]=l;
+    if(l.task_text!==null){
+      if(!STATE.dynTasks[l.habit_id])STATE.dynTasks[l.habit_id]={};
+      if(!STATE.dynTasks[l.habit_id][l.log_date])STATE.dynTasks[l.habit_id][l.log_date]=[];
+      if(!STATE.dynTasks[l.habit_id][l.log_date].find(t=>t.id===l.id))
+        STATE.dynTasks[l.habit_id][l.log_date].push(l);
+    }
+  });
+  (wlRes.data||[]).forEach(l=>{
+    if(!STATE.workoutLogs[l.exercise_id])STATE.workoutLogs[l.exercise_id]={};
+    STATE.workoutLogs[l.exercise_id][l.log_date]=l;
+  });
+  (mRes.data||[]).forEach(m=>{ STATE.mood[m.log_date]=m; });
+  // Also reload notes
+  let noteRes=await sb.from('day_notes').select('*').gte('note_date',monthStart).lte('note_date',monthEnd).maybeSingle().then(()=>sb.from('day_notes').select('*').gte('note_date',monthStart).lte('note_date',monthEnd));
+  if(noteRes.data) noteRes.data.forEach(n=>{ STATE.notes[n.note_date]=n; });
+}
+
+// ===== DAY NOTE =====
+function renderDayNote(){
+  let block=document.getElementById('dayNoteBlock');
+  if(!block)return;
+  let note=STATE.notes&&STATE.notes[ACTIVE_DATE];
+  block.innerHTML=`<div class="day-note-card">
+    <div class="day-note-title">Заметка дня — ${formatShort(ACTIVE_DATE)}</div>
+    <textarea class="day-note-input" id="dayNoteText" placeholder="Что важного произошло сегодня?">${(note&&note.note)||''}</textarea>
+    <div class="day-note-save"><button class="panel-btn primary" id="saveNoteBtn" style="padding:6px 14px;font-size:11px">Сохранить</button></div>
+    ${note&&note.note?`<div class="day-note-saved">Последнее сохранение: ${formatShort(note.updated_at?note.updated_at.split('T')[0]:ACTIVE_DATE)}</div>`:''}
+  </div>`;
+  document.getElementById('saveNoteBtn').addEventListener('click',async()=>{
+    let text=document.getElementById('dayNoteText').value.trim();
+    if(!STATE.notes)STATE.notes={};
+    let cur=STATE.notes[ACTIVE_DATE];
+    if(cur){
+      await sb.from('day_notes').update({note:text,updated_at:new Date().toISOString()}).eq('id',cur.id);
+      cur.note=text;
+    } else {
+      let {data}=await sb.from('day_notes').insert({note_date:ACTIVE_DATE,note:text}).select().single();
+      STATE.notes[ACTIVE_DATE]=data;
+    }
+    renderDayNote();
+  });
+}
+
+// ===== ICON PICKER =====
+function buildIconPicker(selectedIcon){
+  return `<div class="icon-picker" id="iconPicker">${ICONS_LIST.map(ic=>`<div class="icon-opt${ic===selectedIcon?' active':''}" data-icon="${ic}"><i class="ti ${ic}" aria-hidden="true"></i></div>`).join('')}</div>`;
+}
+function setupIconPicker(onChange){
+  document.querySelectorAll('#iconPicker .icon-opt').forEach(el=>{
+    el.addEventListener('click',()=>{
+      document.querySelectorAll('#iconPicker .icon-opt').forEach(o=>o.classList.remove('active'));
+      el.classList.add('active');
+      if(onChange)onChange(el.dataset.icon);
+    });
+  });
+}
+
+
+// ===== УВЕДОМЛЕНИЯ =====
+async function requestNotifications(){
+  if(!('Notification' in window))return;
+  let perm=await Notification.requestPermission();
+  if(perm==='granted'){
+    localStorage.setItem('notifications','on');
+    scheduleNotifications();
+    new Notification('Трекер привычек',{body:'Уведомления включены! 🎯',icon:'/icon.svg'});
+  }
+}
+
+function scheduleNotifications(){
+  if(localStorage.getItem('notifications')!=='on')return;
+  if(!('serviceWorker' in navigator))return;
+  // Morning: 7:00, Evening: 21:00
+  let now=new Date();
+  function msUntil(h,m){ let t=new Date(); t.setHours(h,m,0,0); if(t<=now)t.setDate(t.getDate()+1); return t-now; }
+  setTimeout(()=>{
+    new Notification('Трекер привычек 🌅',{body:'Доброе утро! Время отметить утренние привычки',icon:'/icon.svg'});
+    scheduleNotifications();
+  }, msUntil(7,0));
+  setTimeout(()=>{
+    new Notification('Трекер привычек 🌙',{body:'Вечер! Не забудь оценить день и отметить вечерние привычки',icon:'/icon.svg'});
+  }, msUntil(21,0));
+}
+
+function initNotifications(){
+  if(localStorage.getItem('notifications')==='on') scheduleNotifications();
+}
+
+// ===== СЧЁТЧИКИ =====
+function buildCounterCard(habit, hi, skipped){
+  let color=COLORS[hi%COLORS.length];
+  let log=STATE.counterLogs&&STATE.counterLogs[habit.id]&&STATE.counterLogs[habit.id][ACTIVE_DATE];
+  let val=log?parseFloat(log.value):0;
+  let target=parseFloat(habit.counter_target)||0;
+  let unit=habit.counter_unit||'';
+  let pct=target>0?Math.min(100,Math.round(val/target*100)):0;
+
+  let card=document.createElement('div');
+  card.className='card'+(val>=target&&target>0?' done':'');
+  card.setAttribute('data-hid',habit.id);
+  if(!skipped)card.setAttribute('draggable','true');
+  card.innerHTML=`
+    <div class="card-head">
+      <div class="card-icon" style="background:${color}22"><i class="ti ${habit.icon||'ti-chart-line'}" style="color:${color}" aria-hidden="true"></i></div>
+      <div class="card-info">
+        <div class="card-name">${habit.name}</div>
+        <div class="card-meta" style="color:${color};font-weight:600">${val}${unit?'&nbsp;'+unit:''} ${target>0?'/ '+target+(unit?'&nbsp;'+unit:''):''}${target>0?' ('+pct+'%)':''}</div>
+      </div>
+      <div class="card-actions">
+        ${skipped?'<span class="skip-label">не сегодня</span>':`
+        <svg viewBox="0 0 34 34" width="34" height="34" style="flex-shrink:0">
+          <circle cx="17" cy="17" r="14.5" fill="none" stroke="${color}22" stroke-width="3"/>
+          <circle cx="17" cy="17" r="14.5" fill="none" stroke="${color}" stroke-width="3"
+            stroke-dasharray="${2*Math.PI*14.5}" stroke-dashoffset="${2*Math.PI*14.5*(1-pct/100)}"
+            stroke-linecap="round" transform="rotate(-90 17 17)"/>
+        </svg>`}
+        <div class="icon-btn" data-del="${habit.id}" aria-label="Удалить"><i class="ti ti-trash" aria-hidden="true"></i></div>
+      </div>
+    </div>
+    ${!skipped?`<div class="subtasks" style="padding-top:10px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="icon-btn" data-counter-dec="${habit.id}" aria-label="Уменьшить"><i class="ti ti-minus" aria-hidden="true"></i></button>
+        <input type="number" style="flex:1;text-align:center;background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:8px;color:#fff;font-size:16px;font-weight:700" data-counter-input="${habit.id}" value="${val}" step="${habit.counter_step||1}" min="0"/>
+        <button class="icon-btn" data-counter-inc="${habit.id}" aria-label="Увеличить"><i class="ti ti-plus" aria-hidden="true"></i></button>
+      </div>
+      ${target>0?`<div style="margin-top:8px"><div style="height:4px;background:var(--surface2);border-radius:2px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${color};border-radius:2px"></div></div></div>`:''}
+    </div>`:''}`;
+  return card;
+}
+
+async function saveCounter(habitId, value){
+  if(!STATE.counterLogs)STATE.counterLogs={};
+  if(!STATE.counterLogs[habitId])STATE.counterLogs[habitId]={};
+  let cur=STATE.counterLogs[habitId][ACTIVE_DATE];
+  if(cur){
+    cur.value=value;
+    await sb.from('counter_logs').update({value}).eq('id',cur.id);
+  } else {
+    let {data}=await sb.from('counter_logs').insert({habit_id:habitId,log_date:ACTIVE_DATE,value}).select().single();
+    STATE.counterLogs[habitId][ACTIVE_DATE]=data;
+  }
+}
+
+// ===== ПРИЧИНА ПРОПУСКА =====
+async function askSkipReason(habitId, ds){
+  let reason=prompt('Почему пропустил эту привычку? (необязательно)');
+  if(reason===null)return;
+  if(!reason.trim())return;
+  await sb.from('skip_reasons').upsert({habit_id:habitId,skip_date:ds,reason:reason.trim()},{onConflict:'habit_id,skip_date'});
+}
+
+document.getElementById('notifBtn').addEventListener('click',async()=>{
+  if(localStorage.getItem('notifications')==='on'){
+    localStorage.removeItem('notifications');
+    alert('Уведомления отключены');
+  } else {
+    await requestNotifications();
+  }
+});
+initTheme();
+initNotifications();
+initViewMonth();
 
 init();
 </script>
